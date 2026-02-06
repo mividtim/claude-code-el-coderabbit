@@ -12,13 +12,20 @@
 # Event Source Protocol:
 #   Polls GitHub API every POLL_INTERVAL seconds for new CodeRabbit reviews,
 #   inline review comments, or top-level issue comments.
-#   Outputs event details to stdout when activity is detected, then exits.
+#   Returns ALL events since the given timestamp (sorted by time), then exits.
+#   This enables "catch-up" mode: when launched, immediately returns any pending
+#   events the caller hasn't seen yet.
 #
-# Output format:
+# Output format (multiple events separated by ---EVENT---):
+#   ---EVENT---
 #   TYPE <review|comment|issue_comment>
 #   STATE <APPROVED|CHANGES_REQUESTED|COMMENTED> (reviews only)
 #   TIMESTAMP <iso-timestamp>
-#   BODY <review/comment body>
+#   PATH <file-path> (comments only)
+#   BODY
+#   <review/comment body>
+#   ---EVENT---
+#   ...
 
 set -euo pipefail
 
@@ -31,47 +38,46 @@ SINCE="${2:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 INTERVAL="${POLL_INTERVAL:-30}"
 BOT="coderabbitai[bot]"
 
+# Temporary file to collect all events (timestamp-prefixed for sorting)
+EVENTS_FILE=$(mktemp)
+trap 'rm -f "$EVENTS_FILE"' EXIT
+
 while true; do
-  # Check for new full reviews (APPROVED, CHANGES_REQUESTED, COMMENTED)
-  REVIEW=$(gh api "repos/${REPO}/pulls/${PR}/reviews" \
-    --jq "[.[] | select(.user.login == \"${BOT}\" and .submitted_at > \"${SINCE}\")] | .[-1] // empty" 2>/dev/null || true)
-  if [ -n "$REVIEW" ]; then
-    STATE=$(echo "$REVIEW" | jq -r '.state')
-    TS=$(echo "$REVIEW" | jq -r '.submitted_at')
-    BODY=$(echo "$REVIEW" | jq -r '.body // ""')
-    echo "TYPE review"
-    echo "STATE ${STATE}"
-    echo "TIMESTAMP ${TS}"
-    echo "BODY"
-    echo "$BODY"
-    exit 0
-  fi
+  # Clear events from previous iteration
+  > "$EVENTS_FILE"
 
-  # Check for new inline review comments (thread replies, new comments)
-  COMMENT=$(gh api "repos/${REPO}/pulls/${PR}/comments" \
-    --jq "[.[] | select(.user.login == \"${BOT}\" and .created_at > \"${SINCE}\")] | .[-1] // empty" 2>/dev/null || true)
-  if [ -n "$COMMENT" ]; then
-    TS=$(echo "$COMMENT" | jq -r '.created_at')
-    FILE_PATH=$(echo "$COMMENT" | jq -r '.path // ""')
-    BODY=$(echo "$COMMENT" | jq -r '.body // ""')
-    echo "TYPE comment"
-    echo "TIMESTAMP ${TS}"
-    echo "PATH ${FILE_PATH}"
-    echo "BODY"
-    echo "$BODY"
-    exit 0
-  fi
+  # Collect all reviews since timestamp
+  gh api "repos/${REPO}/pulls/${PR}/reviews" 2>/dev/null | \
+    jq -r --arg bot "$BOT" --arg since "$SINCE" '
+      .[] | select(.user.login == $bot and .submitted_at > $since) |
+      "\(.submitted_at)\treview\t\(.state)\t\t\(.body // "")"
+    ' >> "$EVENTS_FILE" 2>/dev/null || true
 
-  # Check for new top-level issue comments (walkthrough, summary updates)
-  ISSUE_COMMENT=$(gh api "repos/${REPO}/issues/${PR}/comments" \
-    --jq "[.[] | select(.user.login == \"${BOT}\" and .created_at > \"${SINCE}\")] | .[-1] // empty" 2>/dev/null || true)
-  if [ -n "$ISSUE_COMMENT" ]; then
-    TS=$(echo "$ISSUE_COMMENT" | jq -r '.created_at')
-    BODY=$(echo "$ISSUE_COMMENT" | jq -r '.body // ""')
-    echo "TYPE issue_comment"
-    echo "TIMESTAMP ${TS}"
-    echo "BODY"
-    echo "$BODY"
+  # Collect all inline review comments since timestamp
+  gh api "repos/${REPO}/pulls/${PR}/comments" 2>/dev/null | \
+    jq -r --arg bot "$BOT" --arg since "$SINCE" '
+      .[] | select(.user.login == $bot and .created_at > $since) |
+      "\(.created_at)\tcomment\t\t\(.path // "")\t\(.body // "")"
+    ' >> "$EVENTS_FILE" 2>/dev/null || true
+
+  # Collect all top-level issue comments since timestamp
+  gh api "repos/${REPO}/issues/${PR}/comments" 2>/dev/null | \
+    jq -r --arg bot "$BOT" --arg since "$SINCE" '
+      .[] | select(.user.login == $bot and .created_at > $since) |
+      "\(.created_at)\tissue_comment\t\t\t\(.body // "")"
+    ' >> "$EVENTS_FILE" 2>/dev/null || true
+
+  # If we found any events, output them all sorted by timestamp and exit
+  if [ -s "$EVENTS_FILE" ]; then
+    sort "$EVENTS_FILE" | while IFS=$'\t' read -r timestamp type state path body; do
+      echo "---EVENT---"
+      echo "TYPE $type"
+      [ -n "$state" ] && echo "STATE $state"
+      echo "TIMESTAMP $timestamp"
+      [ -n "$path" ] && echo "PATH $path"
+      echo "BODY"
+      echo "$body"
+    done
     exit 0
   fi
 
