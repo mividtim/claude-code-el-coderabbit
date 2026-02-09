@@ -1,0 +1,19 @@
+{
+  "name": "el-coderabbit",
+  "version": "1.0.0",
+  "description": "CodeRabbit event source for the el plugin. Poll for new code reviews and comments on PRs.",
+  "author": {
+    "name": "Tim Garthwaite",
+    "url": "https://github.com/mividtim"
+  },
+  "repository": "https://github.com/mividtim/claude-code-el-coderabbit",
+  "license": "MIT",
+  "keywords": ["el", "coderabbit", "code-review", "github", "events"],
+  "dependencies": {
+    "el": {
+      "marketplace": "mividtim",
+      "source": "mividtim/claude-code-event-listeners",
+      "version": ">=0.7.0"
+    }
+  }
+}

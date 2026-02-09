@@ -5,15 +5,13 @@ Community event source for [claude-code-event-listeners](https://github.com/mivi
 ## Install
 
 ```bash
-# Clone and register with the event listeners plugin
+# From the marketplace (recommended — auto-discovers, pulls in el as dependency)
+claude plugin marketplace add mividtim/claude-code-el-coderabbit
+claude plugin install el-coderabbit
+
+# Or manually register the source
 git clone https://github.com/mividtim/claude-code-el-coderabbit.git
-/el:register ./claude-code-el-coderabbit/coderabbit.sh
-```
-
-Or register directly from a local copy:
-
-```bash
-/el:register /path/to/coderabbit.sh
+/el:register ./claude-code-el-coderabbit/sources.d/coderabbit.sh
 ```
 
 ## Usage
