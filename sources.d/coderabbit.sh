@@ -11,17 +11,20 @@
 #
 # Event Source Protocol:
 #   Polls GitHub API every POLL_INTERVAL seconds for new CodeRabbit reviews,
-#   inline review comments, or top-level issue comments.
-#   Returns ALL events since the given timestamp (sorted by time), then exits.
-#   This enables "catch-up" mode: when launched, immediately returns any pending
-#   events the caller hasn't seen yet.
+#   inline review comments (including thread replies), or top-level issue
+#   comments. Returns ALL events since the given timestamp (sorted by time),
+#   then exits. This enables "catch-up" mode: when launched, immediately
+#   returns any pending events the caller hasn't seen yet.
 #
 # Output format (multiple events separated by ---EVENT---):
 #   ---EVENT---
-#   TYPE <review|comment|issue_comment>
+#   TYPE <review|comment|thread_reply|issue_comment>
 #   STATE <APPROVED|CHANGES_REQUESTED|COMMENTED> (reviews only)
 #   TIMESTAMP <iso-timestamp>
 #   PATH <file-path> (comments only)
+#   COMMENT_ID <numeric-id> (comments and thread replies)
+#   IN_REPLY_TO <numeric-id> (thread replies only — the root comment ID)
+#   THREAD_NODE_ID <graphql-node-id> (thread replies — for resolveReviewThread)
 #   BODY
 #   <review/comment body>
 #   ---EVENT---
@@ -50,31 +53,40 @@ while true; do
   gh api "repos/${REPO}/pulls/${PR}/reviews" 2>/dev/null | \
     jq -r --arg bot "$BOT" --arg since "$SINCE" '
       .[] | select(.user.login == $bot and .submitted_at > $since) |
-      "\(.submitted_at)\treview\t\(.state)\t\t\(.body // "")"
+      "\(.submitted_at)\treview\t\(.state)\t\t\t\t\(.body // "")"
     ' >> "$EVENTS_FILE" 2>/dev/null || true
 
-  # Collect all inline review comments since timestamp
+  # Collect all inline review comments since timestamp.
+  # Comments with in_reply_to_id are thread replies; those without are initial
+  # review comments. Thread replies include their root comment's node_id so the
+  # consumer can resolve threads via the GitHub GraphQL API.
   gh api "repos/${REPO}/pulls/${PR}/comments" 2>/dev/null | \
     jq -r --arg bot "$BOT" --arg since "$SINCE" '
       .[] | select(.user.login == $bot and .created_at > $since) |
-      "\(.created_at)\tcomment\t\t\(.path // "")\t\(.body // "")"
+      if .in_reply_to_id then
+        "\(.created_at)\tthread_reply\t\t\(.path // "")\t\(.id)\t\(.in_reply_to_id)\t\(.body // "")"
+      else
+        "\(.created_at)\tcomment\t\t\(.path // "")\t\(.id)\t\t\(.body // "")"
+      end
     ' >> "$EVENTS_FILE" 2>/dev/null || true
 
   # Collect all top-level issue comments since timestamp
   gh api "repos/${REPO}/issues/${PR}/comments" 2>/dev/null | \
     jq -r --arg bot "$BOT" --arg since "$SINCE" '
       .[] | select(.user.login == $bot and .created_at > $since) |
-      "\(.created_at)\tissue_comment\t\t\t\(.body // "")"
+      "\(.created_at)\tissue_comment\t\t\t\t\t\(.body // "")"
     ' >> "$EVENTS_FILE" 2>/dev/null || true
 
   # If we found any events, output them all sorted by timestamp and exit
   if [ -s "$EVENTS_FILE" ]; then
-    sort "$EVENTS_FILE" | while IFS=$'\t' read -r timestamp type state path body; do
+    sort "$EVENTS_FILE" | while IFS=$'\t' read -r timestamp type state path comment_id in_reply_to body; do
       echo "---EVENT---"
       echo "TYPE $type"
       [ -n "$state" ] && echo "STATE $state"
       echo "TIMESTAMP $timestamp"
       [ -n "$path" ] && echo "PATH $path"
+      [ -n "$comment_id" ] && echo "COMMENT_ID $comment_id"
+      [ -n "$in_reply_to" ] && echo "IN_REPLY_TO $in_reply_to"
       echo "BODY"
       echo "$body"
     done
