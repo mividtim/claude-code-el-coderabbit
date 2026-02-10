@@ -8,12 +8,5 @@
   },
   "repository": "https://github.com/mividtim/claude-code-el-coderabbit",
   "license": "MIT",
-  "keywords": ["el", "coderabbit", "code-review", "github", "events"],
-  "dependencies": {
-    "el": {
-      "marketplace": "mividtim",
-      "source": "mividtim/claude-code-event-listeners",
-      "version": ">=0.7.0"
-    }
-  }
+  "keywords": ["el", "coderabbit", "code-review", "github", "events"]
 }
