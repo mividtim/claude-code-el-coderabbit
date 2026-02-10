@@ -46,6 +46,7 @@ TIMESTAMP 2025-01-15T10:36:15Z
 PATH src/syndication/syndication.controller.e2e-spec.ts
 COMMENT_ID 2784545640
 IN_REPLY_TO 2784537786
+THREAD_NODE_ID PRRT_kwDOIhsEuM5tlN32
 BODY
 @mividtim Thank you for the clarification. You're right...
 ```
@@ -56,7 +57,7 @@ BODY
 |------|------|-------------|
 | `review` | CodeRabbit posts a full review (APPROVED, CHANGES_REQUESTED, COMMENTED) | `STATE` |
 | `comment` | CodeRabbit posts an initial inline review comment | `PATH`, `COMMENT_ID` |
-| `thread_reply` | CodeRabbit replies to an existing review thread | `PATH`, `COMMENT_ID`, `IN_REPLY_TO` |
+| `thread_reply` | CodeRabbit replies to an existing review thread | `PATH`, `COMMENT_ID`, `IN_REPLY_TO`, `THREAD_NODE_ID` |
 | `issue_comment` | CodeRabbit posts a top-level comment (walkthrough, summary) | — |
 
 All events include `TIMESTAMP` and `BODY`.
@@ -69,12 +70,12 @@ The `thread_reply` event type enables automated CodeRabbit thread management:
 2. You reply in-thread with fixes or pushback
 3. Start the listener: `/el:listen coderabbit 1326 <timestamp>`
 4. CodeRabbit replies in thread → listener fires with `TYPE thread_reply`
-5. Read the `BODY` — if CodeRabbit accepts, resolve the thread using the GitHub
-   GraphQL `resolveReviewThread` mutation
+5. Read the `BODY` — if CodeRabbit accepts, resolve the thread:
+   ```
+   gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "PRRT_..."}) { thread { isResolved } } }'
+   ```
+   Use the `THREAD_NODE_ID` from the event output as the `threadId`.
 6. Resolving all threads triggers CodeRabbit to post an `APPROVED` review
-
-The `IN_REPLY_TO` field contains the root comment ID, which you can use to find
-the corresponding review thread for resolution.
 
 ## Typical workflow
 

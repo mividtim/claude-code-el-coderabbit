@@ -53,20 +53,43 @@ while true; do
   gh api "repos/${REPO}/pulls/${PR}/reviews" 2>/dev/null | \
     jq -r --arg bot "$BOT" --arg since "$SINCE" '
       .[] | select(.user.login == $bot and .submitted_at > $since) |
-      "\(.submitted_at)\treview\t\(.state)\t\t\t\t\(.body // "")"
+      "\(.submitted_at)\treview\t\(.state)\t\t\t\t\t\(.body // "")"
     ' >> "$EVENTS_FILE" 2>/dev/null || true
+
+  # Build a lookup from root comment database ID → review thread node ID.
+  # The REST API doesn't expose thread node IDs, so we fetch them via GraphQL.
+  # This is one call per poll cycle and gives us the PRRT_ IDs needed for
+  # resolveReviewThread.
+  OWNER="${REPO%%/*}"
+  NAME="${REPO##*/}"
+  THREAD_MAP=$(gh api graphql -f query="
+    { repository(owner: \"${OWNER}\", name: \"${NAME}\") {
+      pullRequest(number: ${PR}) {
+        reviewThreads(first: 100) { nodes {
+          id
+          comments(first: 1) { nodes { databaseId } }
+        } }
+      }
+    } }" 2>/dev/null | \
+    jq -r '
+      [.data.repository.pullRequest.reviewThreads.nodes[] |
+        { key: (.comments.nodes[0].databaseId | tostring), value: .id }
+      ] | from_entries
+    ' 2>/dev/null) || THREAD_MAP="{}"
 
   # Collect all inline review comments since timestamp.
   # Comments with in_reply_to_id are thread replies; those without are initial
-  # review comments. Thread replies include their root comment's node_id so the
-  # consumer can resolve threads via the GitHub GraphQL API.
+  # review comments. Thread replies include the review thread node ID so the
+  # consumer can resolve threads via the GitHub GraphQL resolveReviewThread
+  # mutation.
   gh api "repos/${REPO}/pulls/${PR}/comments" 2>/dev/null | \
-    jq -r --arg bot "$BOT" --arg since "$SINCE" '
+    jq -r --arg bot "$BOT" --arg since "$SINCE" --argjson threads "$THREAD_MAP" '
       .[] | select(.user.login == $bot and .created_at > $since) |
       if .in_reply_to_id then
-        "\(.created_at)\tthread_reply\t\t\(.path // "")\t\(.id)\t\(.in_reply_to_id)\t\(.body // "")"
+        ($threads[.in_reply_to_id | tostring] // "") as $thread_id |
+        "\(.created_at)\tthread_reply\t\t\(.path // "")\t\(.id)\t\(.in_reply_to_id)\t\($thread_id)\t\(.body // "")"
       else
-        "\(.created_at)\tcomment\t\t\(.path // "")\t\(.id)\t\t\(.body // "")"
+        "\(.created_at)\tcomment\t\t\(.path // "")\t\(.id)\t\t\t\(.body // "")"
       end
     ' >> "$EVENTS_FILE" 2>/dev/null || true
 
@@ -74,12 +97,12 @@ while true; do
   gh api "repos/${REPO}/issues/${PR}/comments" 2>/dev/null | \
     jq -r --arg bot "$BOT" --arg since "$SINCE" '
       .[] | select(.user.login == $bot and .created_at > $since) |
-      "\(.created_at)\tissue_comment\t\t\t\t\t\(.body // "")"
+      "\(.created_at)\tissue_comment\t\t\t\t\t\t\(.body // "")"
     ' >> "$EVENTS_FILE" 2>/dev/null || true
 
   # If we found any events, output them all sorted by timestamp and exit
   if [ -s "$EVENTS_FILE" ]; then
-    sort "$EVENTS_FILE" | while IFS=$'\t' read -r timestamp type state path comment_id in_reply_to body; do
+    sort "$EVENTS_FILE" | while IFS=$'\t' read -r timestamp type state path comment_id in_reply_to thread_node_id body; do
       echo "---EVENT---"
       echo "TYPE $type"
       [ -n "$state" ] && echo "STATE $state"
@@ -87,6 +110,7 @@ while true; do
       [ -n "$path" ] && echo "PATH $path"
       [ -n "$comment_id" ] && echo "COMMENT_ID $comment_id"
       [ -n "$in_reply_to" ] && echo "IN_REPLY_TO $in_reply_to"
+      [ -n "$thread_node_id" ] && echo "THREAD_NODE_ID $thread_node_id"
       echo "BODY"
       echo "$body"
     done
