@@ -1,7 +1,7 @@
 {
   "name": "el-coderabbit",
-  "version": "1.1.0",
-  "description": "CodeRabbit event source for the el plugin. Poll for new code reviews, comments, and thread replies on PRs.",
+  "version": "2.0.0",
+  "description": "CodeRabbit sidecar plugin for el. Runtime PR watch API, GitHub polling for reviews/comments/thread replies. Self-registers with el-sidecar v0.9.0+.",
   "author": {
     "name": "Tim Garthwaite",
     "url": "https://github.com/mividtim"
